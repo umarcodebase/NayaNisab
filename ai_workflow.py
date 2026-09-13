@@ -50,7 +50,7 @@ def run_workflow(
             progress(p, msg)
 
     # STAGE 1 — curriculum intelligence / parsing
-    update(10, "Agent 1/5 — extracting the curriculum structure")
+    update(10, "Reading and structuring the submitted curriculum")
     structure_prompt = f"""
 You are NayaNisab Agent 1, a curriculum analyst. The product is helping a Pakistani university modernise a {subject} curriculum.
 
@@ -80,7 +80,7 @@ LEARNING OBJECTIVES PDF:
     structure = _clean_json(_chat(client, [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": structure_prompt}], max_tokens=8000))
 
     # STAGE 2 — benchmark comparison
-    update(28, "Agent 2/5 — comparing the curriculum with modern global benchmarks")
+    update(28, "Comparing the curriculum with modern global benchmarks")
     benchmark_text = "\n".join(f"- {b['id']}: {b['name']} — {b['signals']} (weight {b['weight']})" for b in BENCHMARKS)
     comparison_prompt = f"""
 You are NayaNisab Agent 2, a curriculum benchmarking specialist.
@@ -121,7 +121,7 @@ Return JSON:
     overall = calculate_overall_score(dims)
 
     # STAGE 3 — gap diagnosis
-    update(48, "Agent 3/5 — locating the exact gaps and their starting point")
+    update(48, "Finding the most important gaps and where they begin")
     gap_prompt = f"""
 You are NayaNisab Agent 3, a diagnostic analyst. Identify the most important curriculum gaps revealed by the benchmark.
 
@@ -148,7 +148,7 @@ BENCHMARK RESULTS:
     gaps = _clean_json(_chat(client, [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": gap_prompt}], max_tokens=8500))
 
     # STAGE 4 — recommendations
-    update(66, "Agent 4/5 — designing realistic curriculum improvements")
+    update(66, "Designing practical curriculum improvements")
     rec_prompt = f"""
 You are NayaNisab Agent 4, an academic curriculum modernisation specialist.
 
@@ -176,7 +176,7 @@ GAPS:
     recommendations = _clean_json(_chat(client, [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": rec_prompt}], max_tokens=9000))
 
     # STAGE 5 — revised curriculum draft
-    update(84, "Agent 5/5 — generating the proposed future-ready curriculum draft")
+    update(84, "Preparing the proposed modernised curriculum")
     rewrite_prompt = f"""
 You are NayaNisab Agent 5, the curriculum drafting agent.
 
