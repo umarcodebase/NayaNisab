@@ -86,10 +86,10 @@ SCHEMA_STRUCTURE = {
         "additionalProperties": False,
         "properties": {
             "program_summary": {"type": "string"},
-            "course_inventory": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-            "learning_outcomes": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-            "tools_and_technologies": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-            "assessment_signals": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+            "course_inventory": {"type": "array", "items": {"type": "string"}},
+            "learning_outcomes": {"type": "array", "items": {"type": "string"}},
+            "tools_and_technologies": {"type": "array", "items": {"type": "string"}},
+            "assessment_signals": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["program_summary", "course_inventory", "learning_outcomes", "tools_and_technologies", "assessment_signals"],
     },
@@ -222,7 +222,7 @@ def run_workflow(
     update(15, "Reading and structuring the submitted curriculum")
     structure_prompt = f"""
 Analyse the submitted curriculum for the subject '{subject}' at '{university}'. Use only the supplied text. Be concise.
-Return only the required structured fields. Do not invent courses, tools, outcomes or assessments.
+Return only the required structured fields. Preserve ALL distinct course topics, outcomes, tools and assessment signals found in the supplied documents; do not truncate or summarise lists to a fixed maximum. Do not invent content.
 
 CURRICULUM:\n{source['source_excerpt']}
 
