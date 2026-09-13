@@ -173,6 +173,7 @@ def _card(title: str, value: str, width: float, styles, accent=GREEN, background
 
 def _header(logo_path: Path | None, title: str, subtitle: str, styles):
     left = []
+    logo_path = Path(logo_path) if logo_path else None
     if logo_path and logo_path.exists():
         img = Image(str(logo_path), width=26 * mm, height=16 * mm)
         img.hAlign = "LEFT"
@@ -304,7 +305,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
         if not g and raw_g not in (None, ""):
             g = {"title": _safe(raw_g), "severity": "Medium", "recommended_change": "Review this identified gap."}
         sev = _safe(g.get("severity"), "Medium")
-        gap_rows.append([Paragraph(_clip(g.get("title"), 105), styles["table_bold"]), Paragraph(sev, styles["table"]), Paragraph(_clip(g.get("recommended_change") or g.get("desired_state") or g.get("why_now"), 190), styles["table"])])
+        gap_rows.append([Paragraph(_clip(g.get("title"), 105), styles["table_bold"]), Paragraph(sev, styles["table"]), Paragraph(_clip(g.get("recommended_change") or g.get("desired_state") or g.get("why_now") or g.get("action"), 190), styles["table"])])
     if len(gap_rows) > 1:
         gt = Table(gap_rows, colWidths=[53 * mm, 28 * mm, 88 * mm], repeatRows=1)
         gt.setStyle(TableStyle([
@@ -346,7 +347,11 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
         if not r and raw_r not in (None, ""):
             r = {"priority": "Mandatory", "change": _safe(raw_r), "where_to_apply": "Programme-level review"}
         priority = _safe(r.get("priority"), "Mandatory")
-        rec_rows.append([Paragraph(priority, styles["table_bold"]), Paragraph(_clip(r.get("change"), 145), styles["table"]), Paragraph(_clip((r.get("where_to_apply") or "") + (" - " + _safe(r.get("implementation")) if r.get("implementation") else ""), 180), styles["table"])])
+        change = r.get("change") or r.get("title")
+        where = _safe(r.get("where_to_apply"))
+        how = _safe(r.get("implementation") or r.get("action"))
+        detail = where + (" - " if where and how else "") + how
+        rec_rows.append([Paragraph(priority, styles["table_bold"]), Paragraph(_clip(change, 145), styles["table"]), Paragraph(_clip(detail or "Programme-level review", 180), styles["table"])])
     if len(rec_rows) > 1:
         rt = Table(rec_rows, colWidths=[25 * mm, 67 * mm, 77 * mm], repeatRows=1)
         rt.setStyle(TableStyle([
@@ -367,7 +372,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     for raw_u in updates[:4]:
         u = _as_dict(raw_u)
         if not u and raw_u not in (None, ""):
-            u = {"course": _safe(raw_u), "updated_focus": "Review and modernise course content."}
+            u = {"course": _safe(raw_u), "updated_focus": "Strengthen this area during the next curriculum review."}
         topics = _as_list(u.get("new_topics", []))
         practical = _safe(u.get("practical_component"))
         assess = _safe(u.get("assessment_update"))

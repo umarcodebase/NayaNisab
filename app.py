@@ -13,6 +13,35 @@ from pdf_utils import extract_pdf_text
 BASE_DIR = Path(__file__).parent
 LOGO_PATH = BASE_DIR / "NayaNisab logo.jpg"
 
+
+# --- tolerant readers -------------------------------------------------------
+# The AI workflow returns compact JSON where several lists hold plain strings
+# (gaps, course updates, course inventory), while older/richer payloads held
+# dictionaries. These helpers render either shape instead of raising
+# "'str' object has no attribute 'get'".
+
+def _field(item, *keys, default=""):
+    """Read a key from a dict item; return the default for anything else."""
+    if isinstance(item, dict):
+        for key in keys:
+            value = item.get(key)
+            if value not in (None, "", [], {}):
+                return value if isinstance(value, str) else str(value)
+    return default
+
+
+def _label(item, *keys, default=""):
+    """Headline text for an item that may be a plain string or a dict."""
+    if isinstance(item, str):
+        return item.strip() or default
+    return _field(item, *keys, default=default)
+
+
+def _sublist(item, key):
+    """A list of strings from a dict item; empty for anything else."""
+    value = item.get(key) if isinstance(item, dict) else None
+    return [str(x) for x in value if x not in (None, "")] if isinstance(value, list) else []
+
 st.set_page_config(
     page_title="NayaNisab | Curriculum Intelligence",
     page_icon="📚",
@@ -244,9 +273,11 @@ else:
         )
         st.markdown("#### Top global gaps")
         for gap in result["benchmark"].get("top_global_gaps", []):
-            st.markdown(f"**{gap.get('title', 'Gap')}** — {gap.get('reason', '')}")
-            if gap.get("affected_courses"):
-                st.caption("Affected areas: " + ", ".join(gap["affected_courses"]))
+            reason = _field(gap, "reason")
+            st.markdown(f"**{_label(gap, 'title', default='Gap')}**" + (f" — {reason}" if reason else ""))
+            courses = _sublist(gap, "affected_courses")
+            if courses:
+                st.caption("Affected areas: " + ", ".join(courses))
 
         st.markdown("#### Domain-by-domain diagnosis")
         for d in sorted(result["benchmark"]["dimension_scores"], key=lambda x: x["score"]):
@@ -262,9 +293,12 @@ else:
         if result.get("gaps", {}).get("first_gap"):
             fg = result["gaps"]["first_gap"]
             st.markdown("#### First meaningful gap")
-            st.markdown(f"**{fg.get('course_or_stage', '')}**")
-            st.write(fg.get("what_is_missing", ""))
-            st.caption(fg.get("why_it_matters", ""))
+            if isinstance(fg, dict):
+                st.markdown(f"**{_field(fg, 'course_or_stage')}**")
+                st.write(_field(fg, "what_is_missing"))
+                st.caption(_field(fg, "why_it_matters"))
+            else:
+                st.write(str(fg))
 
     with tab3:
         recs = result.get("recommendations", {}).get("recommendations", [])
@@ -272,20 +306,32 @@ else:
             st.info("No recommendations were returned.")
         else:
             for rec in recs:
-                priority = rec.get("priority", "Mandatory")
+                priority = _field(rec, "priority", default="Mandatory")
                 icon = "🔴" if priority == "Immediate" else "🟠" if priority == "Mandatory" else "🟢"
-                with st.expander(f"{icon} {priority} — {rec.get('change', 'Curriculum change')}"):
-                    st.write("**Where:**", rec.get("where_to_apply", ""))
-                    st.write("**Why:**", rec.get("reason", ""))
-                    st.write("**How:**", rec.get("implementation", ""))
+                title = _label(rec, "title", "change", default="Curriculum change")
+                with st.expander(f"{icon} {priority} — {title}"):
+                    where = _field(rec, "where_to_apply")
+                    why = _field(rec, "reason")
+                    how = _field(rec, "action", "implementation")
+                    if where:
+                        st.write("**Where:**", where)
+                    if why:
+                        st.write("**Why:**", why)
+                    if how:
+                        st.write("**How:**", how)
+                    if not (where or why or how):
+                        st.write("Apply this change at programme level during the next review.")
 
         st.markdown("#### Proposed course updates")
         updates = result.get("recommendations", {}).get("proposed_course_updates", [])
         for update in updates:
-            st.markdown(f"**{update.get('course', 'Course')}**")
-            st.write(update.get("updated_focus", ""))
-            if update.get("new_topics"):
-                st.caption("New / strengthened topics: " + ", ".join(update["new_topics"]))
+            st.markdown(f"**{_label(update, 'course', default='Course')}**")
+            focus = _field(update, "updated_focus", "current_focus")
+            if focus:
+                st.write(focus)
+            topics = _sublist(update, "new_topics")
+            if topics:
+                st.caption("New / strengthened topics: " + ", ".join(topics))
 
     with tab4:
         draft = result.get("draft", {})
@@ -294,9 +340,9 @@ else:
         if draft.get("principles"):
             st.markdown("#### Principles")
             for principle in draft["principles"]:
-                st.write("• " + principle)
+                st.write("• " + _label(principle))
 
-        revised = draft.get("revised_curriculum", [])
+        revised = [r for r in draft.get("revised_curriculum", []) if isinstance(r, dict)]
         if revised:
             table = pd.DataFrame(revised)
             display_cols = [
@@ -312,14 +358,20 @@ else:
 
         st.markdown("#### Change log")
         for change in draft.get("change_log", []):
-            st.markdown(f"**{change.get('change', 'Change')}**")
-            st.caption(
-                f"Old: {change.get('old_state', '')} → New: {change.get('new_state', '')} · Reason: {change.get('reason', '')}"
+            st.markdown(f"**{_label(change, 'change', default='Change')}**")
+            detail = " · ".join(
+                part for part in [
+                    f"Old: {_field(change, 'old_state')} → New: {_field(change, 'new_state')}"
+                    if _field(change, "old_state") or _field(change, "new_state") else "",
+                    f"Reason: {_field(change, 'reason')}" if _field(change, "reason") else "",
+                ] if part
             )
+            if detail:
+                st.caption(detail)
         if draft.get("teacher_review_points"):
             st.markdown("#### Teacher review points")
             for point in draft["teacher_review_points"]:
-                st.write("• " + point)
+                st.write("• " + _label(point))
         st.warning(
             draft.get(
                 "disclaimer",
@@ -334,16 +386,17 @@ else:
         with col1:
             st.markdown("**Course inventory**")
             for course in structure.get("course_inventory", [])[:25]:
-                st.write(f"• {course.get('course', 'Unknown')} — {course.get('level_or_semester', '')}")
+                level = _field(course, "level_or_semester")
+                st.write(f"• {_label(course, 'course', default='Unknown')}" + (f" — {level}" if level else ""))
         with col2:
             st.markdown("**Tools / technologies detected**")
             tools = structure.get("tools_and_technologies", [])
-            st.write(", ".join(tools[:40]) if tools else "No explicit technologies detected.")
+            st.write(", ".join(_label(t) for t in tools[:40]) if tools else "No explicit technologies detected.")
 
         st.markdown("#### Evidence / uncertainty")
         if structure.get("uncertainties"):
             for item in structure["uncertainties"]:
-                st.write("• " + item)
+                st.write("• " + _label(item))
         else:
             st.write("No major extraction uncertainty was flagged.")
 
