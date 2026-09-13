@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Callable, Optional
 
 from groq import Groq
@@ -7,20 +8,21 @@ from groq import Groq
 from benchmarks import BENCHMARKS
 from scoring import calculate_overall_score, normalise_dimension_scores
 
-# Open-weight, Apache 2.0 model. Smaller than 120B and much easier to run on the free
-# Groq tier once the workflow keeps each request compact.
 MODEL_DEFAULT = "openai/gpt-oss-20b"
-
-# Groq's free/on-demand limit shown in the user's error is 8,000 TPM.
-# Keep request sizes comfortably below that ceiling.
-MAX_SOURCE_CHARS = 18_000
-MAX_CONTEXT_ITEMS = 10
+# The user's on-demand organization currently has an 8,000 TPM ceiling.
+# Keep the whole five-stage workflow comfortably below it and retry briefly on 429s.
+CALL_BUDGETS = [900, 900, 950, 1050]
+MAX_SOURCE_CHARS = 9_000
+MAX_OBJECTIVE_CHARS = 4_000
+MAX_CONTEXT_CHARS = 4_500
+RETRY_DELAYS = (2.0, 5.0, 10.0)
 
 
 def _clean_json(text: str) -> dict:
     text = (text or "").strip()
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
     text = re.sub(r"\s*```$", "", text)
+    value = None
     try:
         value = json.loads(text)
     except json.JSONDecodeError:
@@ -30,53 +32,71 @@ def _clean_json(text: str) -> dict:
             value = json.loads(text[start:end + 1])
         else:
             raise
-    if isinstance(value, dict):
-        return value
-    # Prevent downstream .get() errors if the model returns an unexpected JSON type.
-    return {"value": value}
+    return value if isinstance(value, dict) else {"value": value}
 
 
-def _compact(value, max_chars: int = 12_000):
-    """Compact nested model output so later workflow stages do not resend huge prompts."""
+def _compact(value, max_chars: int = MAX_CONTEXT_CHARS):
     if isinstance(value, dict):
-        compact = {}
-        for key, item in value.items():
-            if isinstance(item, list):
-                compact[key] = item[:MAX_CONTEXT_ITEMS]
+        out = {}
+        for k, v in value.items():
+            if isinstance(v, list):
+                out[k] = v[:6]
             else:
-                compact[key] = item
-        value = compact
+                out[k] = v
+        value = out
     text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     if len(text) <= max_chars:
         return value
-    return {
-        "truncated_context": text[:max_chars],
-        "note": "Some low-priority context was shortened to keep the analysis within API limits."
-    }
+    return {"truncated_context": text[:max_chars]}
 
 
-def _trim_source(text: str, limit: int = MAX_SOURCE_CHARS) -> str:
+def _trim(text: str, limit: int) -> str:
     text = text or ""
     if len(text) <= limit:
         return text
-    head = int(limit * 0.72)
+    head = int(limit * 0.70)
     tail = limit - head
-    return (
-        text[:head]
-        + "\n\n[...middle of source shortened for API limits... ]\n\n"
-        + text[-tail:]
-    )
+    return text[:head] + "\n[...middle omitted... ]\n" + text[-tail:]
 
 
-def _chat(client: Groq, messages: list[dict], *, max_tokens: int = 2200, temperature: float = 0.1) -> str:
-    response = client.chat.completions.create(
-        model=MODEL_DEFAULT,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        response_format={"type": "json_object"},
-    )
-    return response.choices[0].message.content
+def _chat(client: Groq, messages: list[dict], *, max_tokens: int) -> str:
+    last_err = None
+    for delay in (0.0, *RETRY_DELAYS):
+        if delay:
+            time.sleep(delay)
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_DEFAULT,
+                messages=messages,
+                temperature=0.1,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            )
+            return response.choices[0].message.content
+        except Exception as exc:
+            last_err = exc
+            text = str(exc)
+            if "429" not in text and "rate_limit_exceeded" not in text:
+                raise
+    raise last_err
+
+
+def _local_extract(curriculum_text: str, objectives_text: str) -> dict:
+    """Cheap deterministic stage: avoids spending a model call just to repeat the PDF text."""
+    combined = _trim(curriculum_text, MAX_SOURCE_CHARS)
+    objectives = _trim(objectives_text, MAX_OBJECTIVE_CHARS)
+    lines = [re.sub(r"\s+", " ", x).strip() for x in combined.splitlines() if x.strip()]
+    candidate_topics = []
+    for line in lines:
+        if 20 <= len(line) <= 180 and any(ch.isalpha() for ch in line):
+            if any(token in line.lower() for token in ("course", "system", "distribution", "design", "analysis", "engineering", "power", "project", "lab", "technology")):
+                candidate_topics.append(line)
+    return {
+        "source_excerpt": combined,
+        "objectives_excerpt": objectives,
+        "candidate_topics": candidate_topics[:20],
+        "source_note": "Raw source is retained only in compact excerpts; downstream stages use structured summaries."
+    }
 
 
 def run_workflow(
@@ -93,166 +113,58 @@ def run_workflow(
         if progress:
             progress(p, msg)
 
-    # Keep the first request deliberately small. This is the main fix for the 8K TPM error.
-    curriculum_input = _trim_source(curriculum_text, 12_000)
-    objectives_input = _trim_source(learning_objectives_text, 6_000)
-
-    # STAGE 1 — understand the supplied curriculum
+    # Stage 1 (local, no API): reduce large PDF text before any model request.
     update(10, "Reading and structuring the submitted curriculum")
-    structure_prompt = f"""
-You are NayaNisab's curriculum analyst.
-University: {university}
-Subject: {subject}
+    source = _local_extract(curriculum_text, learning_objectives_text)
 
-Extract only the information needed for later gap analysis. Do not judge the curriculum yet.
-Return JSON with:
-{{
-  "program_summary":"...",
-  "course_inventory":[{{"course":"...","level_or_semester":"...","topics":["..."],"practical_component":"..."}}],
-  "learning_outcomes":["..."],
-  "tools_and_technologies":["..."],
-  "assessment_or_project_signals":["..."],
-  "explicit_emerging_topics":["..."],
-  "obvious_age_or_version_markers":["..."]
-}}
-
-CURRICULUM:
-{curriculum_input}
-
-LEARNING OBJECTIVES:
-{objectives_input}
-"""
-    structure = _clean_json(_chat(
-        client,
-        [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": structure_prompt}],
-        max_tokens=1900,
-    ))
-    structure_context = _compact(structure, 10_000)
-
-    # STAGE 2 — benchmark comparison
+    # Stage 2: compact curriculum understanding.
     update(28, "Comparing the curriculum with modern global benchmarks")
-    benchmark_text = "\n".join(
-        f"- {b['id']}: {b['name']} — {b['signals']}" for b in BENCHMARKS
-    )
-    comparison_prompt = f"""
-You are NayaNisab's benchmarking specialist for the subject: {subject}.
-Assess alignment with current global knowledge, skills, practices and future-facing expectations.
-Do not rank the university. Use present/partial/missing evidence and avoid treating any single vendor tool as mandatory.
+    prompt2 = f"""
+NayaNisab curriculum analyst. Subject: {subject}. University: {university}.
+Use the supplied excerpts only. Extract concise facts for later analysis; do not recommend changes yet.
+Return JSON with keys: program_summary, course_inventory (max 8 items), learning_outcomes (max 8), tools_and_technologies (max 8), assessment_signals (max 6), emerging_topics (max 6).
 
-BENCHMARK DIMENSIONS:
-{benchmark_text}
-
-STRUCTURED CURRICULUM:
-{json.dumps(structure_context, ensure_ascii=False, separators=(",", ":"))}
-
-Return JSON:
-{{
-  "dimension_scores":[{{"id":"...","score":0,"evidence":"...","missing":"...","priority":"High|Medium|Low"}}],
-  "top_global_gaps":[{{"title":"...","reason":"...","affected_courses":["..."]}}],
-  "first_gap_point":"...",
-  "benchmark_note":"..."
-}}
+CURRICULUM EXCERPT:\n{source['source_excerpt']}
+LEARNING OBJECTIVES EXCERPT:\n{source['objectives_excerpt']}
 """
-    comparison = _clean_json(_chat(
-        client,
-        [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": comparison_prompt}],
-        max_tokens=2200,
-    ))
+    structure = _clean_json(_chat(client, [{"role":"system","content":"Return valid JSON only."},{"role":"user","content":prompt2}], max_tokens=CALL_BUDGETS[0]))
+    structure_context = _compact(structure)
+
+    # Stage 3: benchmark and score.
+    update(46, "Finding the most important gaps and where they begin")
+    benchmark_text = "\n".join(f"- {b['id']}: {b['name']} — {b['signals']}" for b in BENCHMARKS)
+    prompt3 = f"""
+NayaNisab benchmarking specialist for {subject}. Compare the structured curriculum with current global and industry-facing expectations. Do not claim any single vendor is mandatory.
+Benchmark dimensions:\n{benchmark_text}
+Structured curriculum:\n{json.dumps(structure_context, ensure_ascii=False, separators=(',',':'))}
+Return JSON: dimension_scores (max 10 items with id,score,evidence,missing,priority), top_global_gaps (max 5 items), first_gap_point, benchmark_note.
+"""
+    comparison = _clean_json(_chat(client, [{"role":"system","content":"Return valid JSON only."},{"role":"user","content":prompt3}], max_tokens=CALL_BUDGETS[1]))
     dims = normalise_dimension_scores(comparison.get("dimension_scores", []))
     overall = calculate_overall_score(dims)
-    comparison_context = _compact(comparison, 10_000)
+    comparison_context = _compact({"dimension_scores": dims, "top_global_gaps": comparison.get("top_global_gaps", []), "first_gap_point": comparison.get("first_gap_point", ""), "benchmark_note": comparison.get("benchmark_note", "")})
 
-    # STAGE 3 — diagnose the most important gaps
-    update(48, "Finding the most important gaps and where they begin")
-    gap_prompt = f"""
-You are NayaNisab's diagnostic analyst.
-University: {university}
-Subject: {subject}
-Overall modernisation score: {overall}/100
-
-Return JSON:
-{{
-  "first_gap":{{"course_or_stage":"...","what_is_missing":"...","why_it_matters":"..."}},
-  "critical_gaps":[{{"title":"...","severity":"Critical|High|Medium","current_state":"...","desired_state":"...","why_now":"...","evidence":"...","recommended_change":"..."}}],
-  "quick_wins":["..."],
-  "keep_as_is":["..."],
-  "teacher_message":"..."
-}}
-
-STRUCTURE:
-{json.dumps(structure_context, ensure_ascii=False, separators=(",", ":"))}
-
-BENCHMARK:
-{json.dumps(comparison_context, ensure_ascii=False, separators=(",", ":"))}
-"""
-    gaps = _clean_json(_chat(
-        client,
-        [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": gap_prompt}],
-        max_tokens=2000,
-    ))
-    gaps_context = _compact(gaps, 9_000)
-
-    # STAGE 4 — recommendations
+    # Stage 4: recommendations and change plan in one compact request.
     update(66, "Designing practical curriculum improvements")
-    rec_prompt = f"""
-You are NayaNisab's academic curriculum modernisation specialist.
-Create realistic changes for a Pakistani university. Prefer updating course content, labs, projects, prerequisites, assessments and electives rather than adding many new courses.
-
-Return JSON:
-{{
-  "recommendations":[{{"priority":"Immediate|Mandatory|Optional","change":"...","where_to_apply":"...","reason":"...","implementation":"..."}}],
-  "proposed_course_updates":[{{"course":"...","current_focus":"...","updated_focus":"...","new_topics":["..."],"practical_component":"...","assessment_update":"..."}}],
-  "new_or_strengthened_components":[{{"name":"...","type":"course|module|lab|project|elective","reason":"...","suggested_position":"..."}}]
-}}
-
-STRUCTURE:
-{json.dumps(structure_context, ensure_ascii=False, separators=(",", ":"))}
-
-GAPS:
-{json.dumps(gaps_context, ensure_ascii=False, separators=(",", ":"))}
+    prompt4 = f"""
+You are NayaNisab's academic modernisation specialist for {subject} at {university}.
+Overall score: {overall}/100.
+Create practical, realistic changes for a Pakistani university. Preserve strong foundations. Prioritise course-content updates, labs, projects, assessment, prerequisites, and electives.
+Return JSON with: first_gap, critical_gaps (max 5), recommendations (max 6; priority Immediate|Mandatory|Optional), proposed_course_updates (max 6), teacher_message.
+STRUCTURE:\n{json.dumps(structure_context, ensure_ascii=False, separators=(',',':'))}
+BENCHMARK:\n{json.dumps(comparison_context, ensure_ascii=False, separators=(',',':'))}
 """
-    recommendations = _clean_json(_chat(
-        client,
-        [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": rec_prompt}],
-        max_tokens=2200,
-    ))
-    recommendations_context = _compact(recommendations, 9_000)
+    plan = _clean_json(_chat(client, [{"role":"system","content":"Return valid JSON only."},{"role":"user","content":prompt4}], max_tokens=CALL_BUDGETS[2]))
+    plan_context = _compact(plan)
 
-    # STAGE 5 — concise teacher-reviewable revised curriculum
+    # Stage 5: concise 4-page-report payload.
     update(84, "Preparing the proposed modernised curriculum")
-    rewrite_prompt = f"""
-You are NayaNisab's curriculum drafting specialist.
-Create a concise teacher-reviewable modernised curriculum draft for {university}'s {subject} programme.
-Preserve strong content. Do not claim official approval.
-
-Return JSON:
-{{
-  "title":"Proposed Modernised Curriculum Draft",
-  "executive_summary":"...",
-  "principles":["..."],
-  "revised_curriculum":[{{"course_or_area":"...","status":"Keep|Update|Strengthen|Add","updated_scope":"...","key_topics":["..."],"practical_work":"...","assessment":"..."}}],
-  "change_log":[{{"change":"...","old_state":"...","new_state":"...","reason":"..."}}],
-  "teacher_review_points":["..."],
-  "disclaimer":"AI-generated proposal requiring academic review and institutional approval."
-}}
-
-STRUCTURE:
-{json.dumps(structure_context, ensure_ascii=False, separators=(",", ":"))}
-
-BENCHMARK:
-{json.dumps(comparison_context, ensure_ascii=False, separators=(",", ":"))}
-
-GAPS:
-{json.dumps(gaps_context, ensure_ascii=False, separators=(",", ":"))}
-
-RECOMMENDATIONS:
-{json.dumps(recommendations_context, ensure_ascii=False, separators=(",", ":"))}
+    prompt5 = f"""
+You are NayaNisab's curriculum drafting specialist. Prepare a teacher-reviewable modernised curriculum proposal for {university}'s {subject}. It is a proposal, not an officially approved curriculum.
+Return JSON with: executive_summary, principles (max 5), revised_curriculum (max 8 items with course_or_area,status,updated_scope,key_topics,practical_work,assessment), change_log (max 6 items with change,old_state,new_state,reason), teacher_review_points (max 5), disclaimer.
+SCORE: {overall}/100\nSTRUCTURE:\n{json.dumps(structure_context, ensure_ascii=False, separators=(',',':'))}\nPLAN:\n{json.dumps(plan_context, ensure_ascii=False, separators=(',',':'))}
 """
-    draft = _clean_json(_chat(
-        client,
-        [{"role": "system", "content": "Return valid JSON only."}, {"role": "user", "content": rewrite_prompt}],
-        max_tokens=2600,
-    ))
+    draft = _clean_json(_chat(client, [{"role":"system","content":"Return valid JSON only."},{"role":"user","content":prompt5}], max_tokens=CALL_BUDGETS[3]))
     update(100, "Analysis complete")
 
     return {
@@ -267,7 +179,14 @@ RECOMMENDATIONS:
             "first_gap_point": comparison.get("first_gap_point", ""),
             "benchmark_note": comparison.get("benchmark_note", ""),
         },
-        "gaps": gaps,
-        "recommendations": recommendations,
+        "gaps": {
+            "first_gap": plan.get("first_gap", comparison.get("first_gap_point", "")),
+            "critical_gaps": plan.get("critical_gaps", []),
+            "teacher_message": plan.get("teacher_message", ""),
+        },
+        "recommendations": {
+            "recommendations": plan.get("recommendations", []),
+            "proposed_course_updates": plan.get("proposed_course_updates", []),
+        },
         "draft": draft,
     }
