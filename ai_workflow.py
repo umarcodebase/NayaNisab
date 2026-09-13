@@ -143,7 +143,7 @@ SCHEMA_PLAN = {
                     "required": ["title", "priority", "action"],
                 },
             },
-            "proposed_course_updates": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+            "proposed_course_updates": {"type": "array", "items": {"type": "string"}},
             "teacher_message": {"type": "string"},
         },
         "required": ["first_gap", "critical_gaps", "recommendations", "proposed_course_updates", "teacher_message"],
