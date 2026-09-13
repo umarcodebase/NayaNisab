@@ -75,6 +75,26 @@ def _safe(value: Any, fallback: str = "") -> str:
     return text or fallback
 
 
+
+
+def _as_dict(value: Any) -> dict:
+    """Return a dictionary for PDF sections that may be malformed/string values.
+
+    LLM JSON can occasionally return a string where a list item/object was expected.
+    The PDF renderer should degrade gracefully instead of failing with:
+    'str' object has no attribute 'get'.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list:
+    """Return a list for PDF sections that may be malformed."""
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]
+
 def _clip(text: str, limit: int = 420) -> str:
     text = _safe(text)
     if len(text) <= limit:
@@ -179,11 +199,11 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     score = float(result.get("score", 0) or 0)
     score = max(0, min(100, score))
     band = _safe(result.get("band"), "IMPROVEMENT REQUIRED")
-    benchmark = result.get("benchmark", {}) or {}
-    dimensions = benchmark.get("dimension_scores", []) or []
-    gaps = result.get("gaps", {}) or {}
-    recommendations = result.get("recommendations", {}) or {}
-    draft = result.get("draft", {}) or {}
+    benchmark = _as_dict(result.get("benchmark", {}))
+    dimensions = _as_list(benchmark.get("dimension_scores", []))
+    gaps = _as_dict(result.get("gaps", {}))
+    recommendations = _as_dict(result.get("recommendations", {}))
+    draft = _as_dict(result.get("draft", {}))
     generated = datetime.now().strftime("%d %B %Y")
 
     buffer = io.BytesIO()
@@ -233,7 +253,13 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
 
     story.append(Paragraph("Strongest and weakest benchmark areas", styles["h2"]))
     dim_rows = []
-    for d in sorted(dimensions, key=lambda x: x.get("score", 0), reverse=True)[:6]:
+    safe_dimensions = []
+    for raw_d in dimensions:
+        d = _as_dict(raw_d)
+        if not d and raw_d not in (None, ""):
+            d = {"name": _safe(raw_d), "score": 0, "missing": "No structured benchmark detail returned."}
+        safe_dimensions.append(d)
+    for d in sorted(safe_dimensions, key=lambda x: float(x.get("score", 0) or 0), reverse=True)[:6]:
         s = float(d.get("score", 0) or 0)
         dim_rows.append([Paragraph(_clip(d.get("name", "Dimension"), 65), styles["table_bold"]), Paragraph(f"{s:.0f}/100", styles["table"]), Paragraph(_clip(d.get("missing") or d.get("evidence") or "No detail returned.", 125), styles["table"])])
     if dim_rows:
@@ -253,7 +279,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
 
     # PAGE 2 - gap diagnosis
     story += _header(logo_path, f"Where the curriculum gap begins", f"{uni} | {subject}", styles)
-    first_gap = gaps.get("first_gap") or {}
+    first_gap = _as_dict(gaps.get("first_gap"))
     story.append(Paragraph("First meaningful gap", styles["h1"]))
     if first_gap:
         fg = Table([[Paragraph("Starting point", styles["table_bold"]), Paragraph(_clip(first_gap.get("course_or_stage"), 210), styles["table"])],
@@ -271,9 +297,12 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     story.append(Spacer(1, 7))
 
     story.append(Paragraph("Priority gaps", styles["h2"]))
-    critical = gaps.get("critical_gaps", []) or []
+    critical = _as_list(gaps.get("critical_gaps", []))
     gap_rows = [[Paragraph("Gap", styles["table_bold"]), Paragraph("Severity", styles["table_bold"]), Paragraph("Recommended direction", styles["table_bold"])]]
-    for g in critical[:5]:
+    for raw_g in critical[:5]:
+        g = _as_dict(raw_g)
+        if not g and raw_g not in (None, ""):
+            g = {"title": _safe(raw_g), "severity": "Medium", "recommended_change": "Review this identified gap."}
         sev = _safe(g.get("severity"), "Medium")
         gap_rows.append([Paragraph(_clip(g.get("title"), 105), styles["table_bold"]), Paragraph(sev, styles["table"]), Paragraph(_clip(g.get("recommended_change") or g.get("desired_state") or g.get("why_now"), 190), styles["table"])])
     if len(gap_rows) > 1:
@@ -310,9 +339,12 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     # PAGE 3 - recommendations
     story += _header(logo_path, "Recommended curriculum improvements", f"{uni} | {subject}", styles)
     story.append(Paragraph("Priority actions", styles["h1"]))
-    recs = recommendations.get("recommendations", []) or []
+    recs = _as_list(recommendations.get("recommendations", []))
     rec_rows = [[Paragraph("Priority", styles["table_bold"]), Paragraph("Change", styles["table_bold"]), Paragraph("Where / how", styles["table_bold"])]]
-    for r in recs[:6]:
+    for raw_r in recs[:6]:
+        r = _as_dict(raw_r)
+        if not r and raw_r not in (None, ""):
+            r = {"priority": "Mandatory", "change": _safe(raw_r), "where_to_apply": "Programme-level review"}
         priority = _safe(r.get("priority"), "Mandatory")
         rec_rows.append([Paragraph(priority, styles["table_bold"]), Paragraph(_clip(r.get("change"), 145), styles["table"]), Paragraph(_clip((r.get("where_to_apply") or "") + (" - " + _safe(r.get("implementation")) if r.get("implementation") else ""), 180), styles["table"])])
     if len(rec_rows) > 1:
@@ -330,16 +362,19 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
 
     story.append(Spacer(1, 8))
     story.append(Paragraph("Course and programme updates", styles["h2"]))
-    updates = recommendations.get("proposed_course_updates", []) or []
+    updates = _as_list(recommendations.get("proposed_course_updates", []))
     upd_rows = [[Paragraph("Course / area", styles["table_bold"]), Paragraph("Updated focus", styles["table_bold"]), Paragraph("New / strengthened topics", styles["table_bold"]), Paragraph("Practical / assessment", styles["table_bold"])]]
-    for u in updates[:4]:
-        topics = u.get("new_topics", []) or []
+    for raw_u in updates[:4]:
+        u = _as_dict(raw_u)
+        if not u and raw_u not in (None, ""):
+            u = {"course": _safe(raw_u), "updated_focus": "Review and modernise course content."}
+        topics = _as_list(u.get("new_topics", []))
         practical = _safe(u.get("practical_component"))
         assess = _safe(u.get("assessment_update"))
         upd_rows.append([
             Paragraph(_clip(u.get("course"), 80), styles["table_bold"]),
             Paragraph(_clip(u.get("updated_focus") or u.get("current_focus"), 170), styles["table"]),
-            Paragraph(_clip(", ".join(map(str, topics[:4])), 130), styles["table"]),
+            Paragraph(_clip(", ".join(_safe(x) for x in topics[:4]), 130), styles["table"]),
             Paragraph(_clip((practical + (" | " if practical and assess else "") + assess), 130), styles["table"]),
         ])
     if len(upd_rows) > 1:
@@ -365,9 +400,12 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     story.append(Paragraph(_clip(draft.get("executive_summary"), 650), styles["body"]))
     story.append(Spacer(1, 3))
 
-    revised = draft.get("revised_curriculum", []) or []
+    revised = _as_list(draft.get("revised_curriculum", []))
     rows = [[Paragraph("Course / area", styles["table_bold"]), Paragraph("Status", styles["table_bold"]), Paragraph("Updated scope", styles["table_bold"]), Paragraph("Practical work / assessment", styles["table_bold"])]]
-    for r in revised[:6]:
+    for raw_r in revised[:6]:
+        r = _as_dict(raw_r)
+        if not r and raw_r not in (None, ""):
+            r = {"course_or_area": _safe(raw_r), "status": "Update", "updated_scope": "Review and modernise this area."}
         practical = _safe(r.get("practical_work"))
         assessment = _safe(r.get("assessment"))
         rows.append([
@@ -391,9 +429,12 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
 
     story.append(Spacer(1, 6))
     story.append(Paragraph("Change log", styles["h2"]))
-    changes = draft.get("change_log", []) or []
+    changes = _as_list(draft.get("change_log", []))
     change_rows = [[Paragraph("Change", styles["table_bold"]), Paragraph("From", styles["table_bold"]), Paragraph("To", styles["table_bold"]), Paragraph("Reason", styles["table_bold"])]]
-    for c in changes[:4]:
+    for raw_c in changes[:4]:
+        c = _as_dict(raw_c)
+        if not c and raw_c not in (None, ""):
+            c = {"change": _safe(raw_c), "old_state": "Current curriculum", "new_state": "Modernised proposal", "reason": "Benchmark-driven improvement."}
         change_rows.append([
             Paragraph(_clip(c.get("change"), 80), styles["table_bold"]),
             Paragraph(_clip(c.get("old_state"), 95), styles["table"]),
