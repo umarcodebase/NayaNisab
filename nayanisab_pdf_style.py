@@ -46,7 +46,31 @@ WHITE = colors.white
 
 def _safe(value: Any, fallback: str = "") -> str:
     text = "" if value is None else str(value)
-    text = text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2019", "'")
+    # ReportLab's built-in Helvetica uses a limited encoding. Some AI-generated
+    # text can contain Unicode punctuation such as non-breaking hyphens (U+2011),
+    # which render as black boxes in the PDF. Normalise these characters before
+    # sending text to Paragraph/Table cells.
+    replacements = {
+        "\u2010": "-",  # hyphen
+        "\u2011": "-",  # non-breaking hyphen (the main source of black boxes)
+        "\u2012": "-",  # figure dash
+        "\u2013": "-",  # en dash
+        "\u2014": "-",  # em dash
+        "\u2212": "-",  # minus sign
+        "\u2018": "'",  # left single quote
+        "\u2019": "'",  # right single quote
+        "\u201c": '"',  # left double quote
+        "\u201d": '"',  # right double quote
+        "\u00a0": " ",  # non-breaking space
+        "\u2022": "-",  # bullet
+        "\u00b7": "-",  # middle dot
+        "\u2026": "...",  # ellipsis
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    # Final safety pass: replace remaining non-ASCII characters that Helvetica
+    # cannot represent with a plain ASCII fallback rather than a black glyph box.
+    text = text.encode("latin-1", "replace").decode("latin-1")
     text = re.sub(r"\s+", " ", text).strip()
     return text or fallback
 
