@@ -45,6 +45,10 @@ WHITE = colors.white
 
 
 def _safe(value: Any, fallback: str = "") -> str:
+    if isinstance(value, dict):
+        value = " - ".join(_safe(v) for v in value.values() if v not in (None, "", [], {}))
+    elif isinstance(value, (list, tuple)):
+        value = "; ".join(part for part in (_safe(v) for v in value) if part)
     text = "" if value is None else str(value)
     # ReportLab's built-in Helvetica uses a limited encoding. Some AI-generated
     # text can contain Unicode punctuation such as non-breaking hyphens (U+2011),
@@ -148,6 +152,9 @@ def _styles():
         "tiny": ParagraphStyle("NNTiny", parent=base["BodyText"], fontName="Helvetica", fontSize=6.4, leading=8.1, textColor=MUTED, spaceAfter=1),
         "table": ParagraphStyle("NNTable", parent=base["BodyText"], fontName="Helvetica", fontSize=6.8, leading=8.3, textColor=INK),
         "table_bold": ParagraphStyle("NNTableBold", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=6.8, leading=8.3, textColor=NAVY),
+        # Header cells sit on a dark fill. The Paragraph colour wins over the
+        # table's TEXTCOLOR, so header text needs its own white style.
+        "table_head": ParagraphStyle("NNTableHead", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=6.9, leading=8.4, textColor=WHITE),
         "score": ParagraphStyle("NNScore", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=30, leading=31, textColor=NAVY, alignment=TA_LEFT),
         "score_label": ParagraphStyle("NNScoreLabel", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=10.5, leading=12.5, textColor=NAVY, alignment=TA_LEFT),
         "callout": ParagraphStyle("NNCallout", parent=base["BodyText"], fontName="Helvetica", fontSize=8.0, leading=11.2, textColor=INK),
@@ -264,7 +271,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
         s = float(d.get("score", 0) or 0)
         dim_rows.append([Paragraph(_clip(d.get("name", "Dimension"), 65), styles["table_bold"]), Paragraph(f"{s:.0f}/100", styles["table"]), Paragraph(_clip(d.get("missing") or d.get("evidence") or "No detail returned.", 125), styles["table"])])
     if dim_rows:
-        dt = Table([[Paragraph("Benchmark area", styles["table_bold"]), Paragraph("Score", styles["table_bold"]), Paragraph("Key reading", styles["table_bold"])] ] + dim_rows, colWidths=[47 * mm, 18 * mm, 104 * mm], repeatRows=1)
+        dt = Table([[Paragraph("Benchmark area", styles["table_head"]), Paragraph("Score", styles["table_head"]), Paragraph("Key reading", styles["table_head"])] ] + dim_rows, colWidths=[47 * mm, 18 * mm, 104 * mm], repeatRows=1)
         dt.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
             ("GRID", (0, 0), (-1, -1), 0.3, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -299,15 +306,36 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
 
     story.append(Paragraph("Priority gaps", styles["h2"]))
     critical = _as_list(gaps.get("critical_gaps", []))
-    gap_rows = [[Paragraph("Gap", styles["table_bold"]), Paragraph("Severity", styles["table_bold"]), Paragraph("Recommended direction", styles["table_bold"])]]
+    gap_headers = ["Gap", "Severity", "Recommended direction"]
+    gap_weights = [53.0, 28.0, 88.0]
+    gap_data = []
     for raw_g in critical[:5]:
         g = _as_dict(raw_g)
-        if not g and raw_g not in (None, ""):
-            g = {"title": _safe(raw_g), "severity": "Medium", "recommended_change": "Review this identified gap."}
-        sev = _safe(g.get("severity"), "Medium")
-        gap_rows.append([Paragraph(_clip(g.get("title"), 105), styles["table_bold"]), Paragraph(sev, styles["table"]), Paragraph(_clip(g.get("recommended_change") or g.get("desired_state") or g.get("why_now") or g.get("action"), 190), styles["table"])])
-    if len(gap_rows) > 1:
-        gt = Table(gap_rows, colWidths=[53 * mm, 28 * mm, 88 * mm], repeatRows=1)
+        if not g:
+            # A plain-text gap carries no severity or direction of its own:
+            # leave those cells empty instead of inventing a rating.
+            if raw_g not in (None, ""):
+                gap_data.append([_safe(raw_g), "", ""])
+            continue
+        gap_data.append([
+            _safe(g.get("title") or g.get("gap")),
+            _safe(g.get("severity")),
+            _safe(g.get("recommended_change") or g.get("desired_state") or g.get("why_now") or g.get("action")),
+        ])
+    keep = [i for i in range(3) if any(row[i].strip() for row in gap_data)]
+    if len(keep) == 1 and keep[0] == 0:
+        gap_headers[0] = "Priority gap"
+    if gap_data and keep:
+        total = sum(gap_weights[i] for i in keep)
+        widths = [(gap_weights[i] / total) * 169.0 * mm for i in keep]
+        limits = [int(w / mm * 3.8) for w in widths]
+        gap_rows = [[Paragraph(gap_headers[i], styles["table_head"]) for i in keep]]
+        for row in gap_data:
+            gap_rows.append([
+                Paragraph(_clip(row[i], limits[n]), styles["table_bold"] if i == 0 else styles["table"])
+                for n, i in enumerate(keep)
+            ])
+        gt = Table(gap_rows, colWidths=widths, repeatRows=1)
         gt.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
             ("GRID", (0, 0), (-1, -1), 0.3, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -326,7 +354,9 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
         title = _safe(item.get("title"), "Gap") if isinstance(item, dict) else _safe(item, "Gap")
         reason = _safe(item.get("reason"), "") if isinstance(item, dict) else ""
         courses = item.get("affected_courses", []) if isinstance(item, dict) else []
-        line = f"<b>{_clip(title, 95)}</b> - {_clip(reason, 190)}"
+        line = f"<b>{_clip(title, 95)}</b>"
+        if reason:
+            line += f" - {_clip(reason, 190)}"
         if courses:
             line += f" <font color='#667085'>Areas: {_clip(', '.join(map(str, courses[:4])), 150)}</font>"
         story.append(Paragraph(line, styles["body"]))
@@ -341,7 +371,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     story += _header(logo_path, "Recommended curriculum improvements", f"{uni} | {subject}", styles)
     story.append(Paragraph("Priority actions", styles["h1"]))
     recs = _as_list(recommendations.get("recommendations", []))
-    rec_rows = [[Paragraph("Priority", styles["table_bold"]), Paragraph("Change", styles["table_bold"]), Paragraph("Where / how", styles["table_bold"])]]
+    rec_rows = [[Paragraph("Priority", styles["table_head"]), Paragraph("Change", styles["table_head"]), Paragraph("Where / how", styles["table_head"])]]
     for raw_r in recs[:6]:
         r = _as_dict(raw_r)
         if not r and raw_r not in (None, ""):
@@ -368,22 +398,42 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     story.append(Spacer(1, 8))
     story.append(Paragraph("Course and programme updates", styles["h2"]))
     updates = _as_list(recommendations.get("proposed_course_updates", []))
-    upd_rows = [[Paragraph("Course / area", styles["table_bold"]), Paragraph("Updated focus", styles["table_bold"]), Paragraph("New / strengthened topics", styles["table_bold"]), Paragraph("Practical / assessment", styles["table_bold"])]]
-    for raw_u in updates[:4]:
+    upd_headers = ["Course / area", "Updated focus", "New / strengthened topics", "Practical / assessment"]
+    upd_weights = [37.0, 46.0, 45.0, 42.0]
+    upd_data = []
+    for raw_u in updates[:5]:
         u = _as_dict(raw_u)
-        if not u and raw_u not in (None, ""):
-            u = {"course": _safe(raw_u), "updated_focus": "Strengthen this area during the next curriculum review."}
+        if not u:
+            # Compact payloads send one sentence per update: show it in full
+            # rather than padding three columns with placeholder text.
+            if raw_u not in (None, ""):
+                upd_data.append([_safe(raw_u), "", "", ""])
+            continue
         topics = _as_list(u.get("new_topics", []))
         practical = _safe(u.get("practical_component"))
         assess = _safe(u.get("assessment_update"))
-        upd_rows.append([
-            Paragraph(_clip(u.get("course"), 80), styles["table_bold"]),
-            Paragraph(_clip(u.get("updated_focus") or u.get("current_focus"), 170), styles["table"]),
-            Paragraph(_clip(", ".join(_safe(x) for x in topics[:4]), 130), styles["table"]),
-            Paragraph(_clip((practical + (" | " if practical and assess else "") + assess), 130), styles["table"]),
+        upd_data.append([
+            _safe(u.get("course") or u.get("course_or_area")),
+            _safe(u.get("updated_focus") or u.get("current_focus")),
+            ", ".join(_safe(x) for x in topics[:4]),
+            practical + (" | " if practical and assess else "") + assess,
         ])
-    if len(upd_rows) > 1:
-        ut = Table(upd_rows, colWidths=[37 * mm, 46 * mm, 45 * mm, 42 * mm], repeatRows=1)
+    # Keep only the columns that actually carry content, so the table never
+    # renders half-empty, and give the freed width back to what remains.
+    keep = [i for i in range(4) if any(row[i].strip() for row in upd_data)]
+    if len(keep) == 1 and keep[0] == 0:
+        upd_headers[0] = "Proposed update"
+    if upd_data and keep:
+        total = sum(upd_weights[i] for i in keep)
+        widths = [(upd_weights[i] / total) * 170.0 * mm for i in keep]
+        limits = [int(w / mm * 3.8) for w in widths]
+        upd_rows = [[Paragraph(upd_headers[i], styles["table_head"]) for i in keep]]
+        for row in upd_data:
+            upd_rows.append([
+                Paragraph(_clip(row[i], limits[n]), styles["table_bold"] if i == 0 else styles["table"])
+                for n, i in enumerate(keep)
+            ])
+        ut = Table(upd_rows, colWidths=widths, repeatRows=1)
         ut.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), GREEN_DARK), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
             ("GRID", (0, 0), (-1, -1), 0.3, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -406,7 +456,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     story.append(Spacer(1, 3))
 
     revised = _as_list(draft.get("revised_curriculum", []))
-    rows = [[Paragraph("Course / area", styles["table_bold"]), Paragraph("Status", styles["table_bold"]), Paragraph("Updated scope", styles["table_bold"]), Paragraph("Practical work / assessment", styles["table_bold"])]]
+    rows = [[Paragraph("Course / area", styles["table_head"]), Paragraph("Status", styles["table_head"]), Paragraph("Updated scope", styles["table_head"]), Paragraph("Practical work / assessment", styles["table_head"])]]
     for raw_r in revised[:6]:
         r = _as_dict(raw_r)
         if not r and raw_r not in (None, ""):
@@ -435,7 +485,7 @@ def build_curriculum_report(result: dict[str, Any], logo_path: Path | None = Non
     story.append(Spacer(1, 6))
     story.append(Paragraph("Change log", styles["h2"]))
     changes = _as_list(draft.get("change_log", []))
-    change_rows = [[Paragraph("Change", styles["table_bold"]), Paragraph("From", styles["table_bold"]), Paragraph("To", styles["table_bold"]), Paragraph("Reason", styles["table_bold"])]]
+    change_rows = [[Paragraph("Change", styles["table_head"]), Paragraph("From", styles["table_head"]), Paragraph("To", styles["table_head"]), Paragraph("Reason", styles["table_head"])]]
     for raw_c in changes[:4]:
         c = _as_dict(raw_c)
         if not c and raw_c not in (None, ""):

@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from ai_workflow import MODEL_DEFAULT, run_workflow
+from ai_workflow import MODEL_DEFAULT, flatten_text, run_workflow
 from benchmarks import score_band
 from nayanisab_pdf_style import build_curriculum_report
 from pdf_utils import extract_pdf_text
@@ -26,21 +26,25 @@ def _field(item, *keys, default=""):
         for key in keys:
             value = item.get(key)
             if value not in (None, "", [], {}):
-                return value if isinstance(value, str) else str(value)
+                return flatten_text(value) or default
     return default
 
 
 def _label(item, *keys, default=""):
     """Headline text for an item that may be a plain string or a dict."""
     if isinstance(item, str):
-        return item.strip() or default
-    return _field(item, *keys, default=default)
+        return flatten_text(item).strip() or default
+    if isinstance(item, dict):
+        return _field(item, *keys, default="") or flatten_text(item) or default
+    return flatten_text(item) or default
 
 
 def _sublist(item, key):
     """A list of strings from a dict item; empty for anything else."""
     value = item.get(key) if isinstance(item, dict) else None
-    return [str(x) for x in value if x not in (None, "")] if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    return [text for text in (flatten_text(x) for x in value) if text]
 
 st.set_page_config(
     page_title="NayaNisab | Curriculum Intelligence",
@@ -267,8 +271,9 @@ else:
     with tab2:
         st.markdown("#### Where does the gap begin?")
         st.info(
-            result["benchmark"].get(
-                "first_gap_point", "The analysis could not confidently identify a first gap point."
+            _label(
+                result["benchmark"].get("first_gap_point"),
+                default="The analysis could not confidently identify a first gap point.",
             )
         )
         st.markdown("#### Top global gaps")
@@ -288,7 +293,7 @@ else:
 
         if result.get("gaps", {}).get("teacher_message"):
             st.markdown("#### Teacher-facing explanation")
-            st.write(result["gaps"]["teacher_message"])
+            st.write(_label(result["gaps"]["teacher_message"]))
 
         if result.get("gaps", {}).get("first_gap"):
             fg = result["gaps"]["first_gap"]
@@ -336,7 +341,7 @@ else:
     with tab4:
         draft = result.get("draft", {})
         st.markdown(f"### {draft.get('title', 'Proposed Modernised Curriculum Draft')}")
-        st.write(draft.get("executive_summary", ""))
+        st.write(_label(draft.get("executive_summary", "")))
         if draft.get("principles"):
             st.markdown("#### Principles")
             for principle in draft["principles"]:

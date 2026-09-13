@@ -43,6 +43,48 @@ def _clean_json(text: str) -> dict:
     return value if isinstance(value, dict) else {"value": value}
 
 
+# Keys whose value speaks for itself and needs no "Key: " prefix when flattened.
+_BARE_KEYS = {
+    "title", "change", "course", "course_or_area", "name", "gap", "action",
+    "text", "value", "summary", "description", "item",
+}
+
+
+def flatten_text(value) -> str:
+    """Render any payload fragment as readable prose - never raw JSON.
+
+    A model sometimes returns an object where the schema asked for a string.
+    Dumping that as JSON leaks braces and quotes into the UI and the PDF, so it
+    is flattened into a sentence instead. JSON that arrives already wrapped in a
+    string is parsed first, then flattened the same way.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped[:1] in ("{", "["):
+            try:
+                return flatten_text(json.loads(stripped))
+            except Exception:
+                return value
+        return value
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "; ".join(part for part in (flatten_text(v) for v in value) if part)
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            text = flatten_text(item)
+            if not text:
+                continue
+            parts.append(text if key in _BARE_KEYS else f"{str(key).replace('_', ' ').capitalize()}: {text}")
+        return " - ".join(parts)
+    return str(value)
+
+
 def _default_for(schema: dict):
     kind = schema.get("type")
     if kind == "string":
@@ -100,9 +142,7 @@ def _coerce(value, schema: dict):
         except (TypeError, ValueError):
             return float(schema.get("minimum", 0))
     if kind == "string":
-        if isinstance(value, (dict, list)):
-            return json.dumps(value, ensure_ascii=False)
-        return "" if value is None else str(value)
+        return flatten_text(value)
     return value
 
 
