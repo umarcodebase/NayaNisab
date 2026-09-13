@@ -9,8 +9,6 @@ from benchmarks import BENCHMARKS
 from scoring import calculate_overall_score, normalise_dimension_scores
 
 MODEL = "openai/gpt-oss-20b"
-# Backward-compatible name used by app.py
-MODEL_DEFAULT = MODEL
 # Keep the combined request footprint below the user's 8K TPM on-demand ceiling.
 MAX_SOURCE_CHARS = 3_500
 MAX_OBJECTIVE_CHARS = 1_800
