@@ -96,7 +96,7 @@ def priority_pill(priority: str) -> str:
 
 def feature_card(number: int, title: str, body: str, lit: bool = False) -> str:
     return (
-        f'<div class="card{" lit" if lit else ""} anim d{min(number, 6)}">'
+        f'<div class="card eq{" lit" if lit else ""} anim d{min(number, 6)}">'
         f'<div class="num">{number:02d}</div><h4>{escape(title)}</h4>'
         f'<div class="rule"></div><p>{escape(body)}</p></div>'
     )
@@ -185,11 +185,11 @@ if st.session_state.result is None:
     st.write("")
     html('<div class="anim d3" style="font-size:1.1rem;font-weight:750;margin:14px 0 12px">What NayaNisab returns</div>')
     cards = [
-        ("Modernisation score", "A transparent, weighted 0-100 alignment score across eleven benchmark dimensions."),
-        ("Gap starting point", "The first meaningful point in the programme where modernisation pressure appears."),
-        ("Priority actions", "Immediate, mandatory and optional improvements, each with a concrete next step."),
-        ("Updated curriculum", "A structured, teacher-reviewable proposal that preserves strong foundations."),
-        ("Change log & PDF", "A record of what changed and why, exported as a four-page report."),
+        ("Modernisation score", "A transparent 0-100 score across eleven weighted dimensions."),
+        ("Gap starting point", "Where modernisation pressure first appears in the programme."),
+        ("Priority actions", "Immediate, mandatory and optional steps, each one concrete."),
+        ("Updated curriculum", "A teacher-reviewable proposal that keeps strong foundations."),
+        ("Change log & PDF", "What changed and why, exported as a four-page report."),
     ]
     cols = st.columns(len(cards), gap="medium")
     for i, (col, (title, body)) in enumerate(zip(cols, cards), start=1):

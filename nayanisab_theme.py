@@ -98,7 +98,9 @@ hr{border-color:var(--line);}
 .card.lit{border-color:rgba(255,122,24,.55);box-shadow:0 0 42px rgba(255,122,24,.10);}
 .num{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;font-family:var(--mono);font-weight:700;
   font-size:.82rem;color:#0A0A0F;background:linear-gradient(140deg,var(--orange),var(--orange-soft));margin-bottom:13px;}
-.card h4{margin:0 0 6px;font-size:1.02rem;font-weight:700;}
+.card h4{margin:0 0 6px;font-size:1.02rem;font-weight:700;overflow-wrap:normal;word-break:normal;hyphens:none;}
+.card.eq{min-height:232px;display:flex;flex-direction:column;}
+.card.eq p{overflow-wrap:normal;word-break:normal;}
 .card p{margin:0;color:var(--muted);font-size:.87rem;line-height:1.55;}
 .rule{height:2px;width:34px;border-radius:2px;background:linear-gradient(90deg,var(--orange),transparent);margin:11px 0;}
 .accent{color:var(--orange);font-weight:700;}
@@ -175,9 +177,16 @@ hr{border-color:var(--line);}
 [data-testid="stDownloadButton"] button{background:linear-gradient(120deg,var(--orange),var(--orange-soft));color:#0A0A0F;
   border:none;font-weight:800;border-radius:14px;padding:.8rem 1.1rem;}
 [data-testid="stDownloadButton"] button:hover{filter:brightness(1.07);transform:translateY(-2px);}
-.stTextInput input,.stTextArea textarea{background:rgba(255,255,255,.04)!important;border:1px solid var(--line)!important;
-  border-radius:12px!important;color:var(--ink)!important;}
-.stTextInput input:focus{border-color:var(--orange)!important;box-shadow:0 0 0 3px rgba(255,122,24,.14)!important;}
+[data-baseweb="input"],[data-baseweb="base-input"],[data-baseweb="textarea"]{background:rgba(255,255,255,.04)!important;
+  border-color:var(--line)!important;border-radius:12px!important;}
+.stTextInput input,.stTextArea textarea,[data-testid="stTextInput"] input,[data-baseweb="input"] input,
+[data-baseweb="base-input"] input,[data-baseweb="textarea"] textarea{
+  background:transparent!important;border:none!important;color:#F4F4F7!important;
+  -webkit-text-fill-color:#F4F4F7!important;caret-color:var(--orange);}
+.stTextInput input::placeholder,.stTextArea textarea::placeholder,[data-baseweb="input"] input::placeholder{
+  color:#6E6E82!important;-webkit-text-fill-color:#6E6E82!important;opacity:1;}
+.stTextInput div[data-baseweb="input"]:focus-within,[data-baseweb="base-input"]:focus-within{
+  border-color:var(--orange)!important;box-shadow:0 0 0 3px rgba(255,122,24,.14)!important;}
 [data-testid="stFileUploaderDropzone"]{background:rgba(255,255,255,.028);border:1.5px dashed rgba(255,255,255,.16);
   border-radius:16px;transition:.25s;}
 [data-testid="stFileUploaderDropzone"]:hover{border-color:var(--orange);background:rgba(255,122,24,.05);}
