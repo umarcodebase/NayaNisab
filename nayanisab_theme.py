@@ -177,8 +177,10 @@ hr{border-color:var(--line);}
 [data-testid="stDownloadButton"] button{background:linear-gradient(120deg,var(--orange),var(--orange-soft));color:#0A0A0F;
   border:none;font-weight:800;border-radius:14px;padding:.8rem 1.1rem;}
 [data-testid="stDownloadButton"] button:hover{filter:brightness(1.07);transform:translateY(-2px);}
-[data-baseweb="input"],[data-baseweb="base-input"],[data-baseweb="textarea"]{background:rgba(255,255,255,.04)!important;
-  border-color:var(--line)!important;border-radius:12px!important;}
+[data-baseweb="input"],[data-baseweb="base-input"],[data-baseweb="textarea"],[data-baseweb="select"] > div,
+.stTextInput > div,.stTextArea > div,[data-testid="stTextInput"] > div,[data-testid="stTextInputRootElement"]{
+  background:#12121A!important;background-color:#12121A!important;
+  border:1px solid var(--line)!important;border-radius:12px!important;}
 .stTextInput input,.stTextArea textarea,[data-testid="stTextInput"] input,[data-baseweb="input"] input,
 [data-baseweb="base-input"] input,[data-baseweb="textarea"] textarea{
   background:transparent!important;border:none!important;color:#F4F4F7!important;
@@ -187,10 +189,15 @@ hr{border-color:var(--line);}
   color:#6E6E82!important;-webkit-text-fill-color:#6E6E82!important;opacity:1;}
 .stTextInput div[data-baseweb="input"]:focus-within,[data-baseweb="base-input"]:focus-within{
   border-color:var(--orange)!important;box-shadow:0 0 0 3px rgba(255,122,24,.14)!important;}
-[data-testid="stFileUploaderDropzone"]{background:rgba(255,255,255,.028);border:1.5px dashed rgba(255,255,255,.16);
-  border-radius:16px;transition:.25s;}
-[data-testid="stFileUploaderDropzone"]:hover{border-color:var(--orange);background:rgba(255,122,24,.05);}
-[data-testid="stFileUploaderDropzone"] *{color:var(--muted);}
+[data-testid="stFileUploaderDropzone"],[data-testid="stFileUploader"] section{background:#0F0F16!important;
+  border:1.5px dashed rgba(255,255,255,.16)!important;border-radius:16px;transition:.25s;}
+[data-testid="stFileUploaderDropzone"]:hover{border-color:var(--orange)!important;}
+[data-testid="stFileUploaderDropzone"] *,[data-testid="stFileUploader"] label{color:var(--muted)!important;}
+[data-testid="stFileUploaderDropzone"] button{background:rgba(255,255,255,.06)!important;color:var(--ink)!important;
+  border:1px solid var(--line)!important;}
+[data-testid="stFileUploaderFile"]{background:#12121A!important;border-radius:10px;}
+[data-testid="stFileUploaderFile"] *{color:var(--ink)!important;}
+label,[data-testid="stWidgetLabel"] p{color:#D3D3DE!important;}
 .stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid var(--line);}
 .stTabs [data-baseweb="tab"]{background:transparent;border-radius:11px 11px 0 0;padding:10px 17px;color:var(--muted);font-weight:650;}
 .stTabs [aria-selected="true"]{background:rgba(255,122,24,.09);color:var(--orange)!important;box-shadow:inset 0 -2px 0 var(--orange);}
