@@ -29,18 +29,18 @@ from reportlab.platypus import (
 )
 
 PAGE_W, PAGE_H = A4
-NAVY = colors.HexColor("#101936")
-GREEN = colors.HexColor("#0B6E43")
-GREEN_DARK = colors.HexColor("#075333")
-GREEN_PALE = colors.HexColor("#EEF7F2")
-GREEN_LIGHT = colors.HexColor("#DCEFE4")
+NAVY = colors.HexColor("#111118")        # near-black, used for table headers
+GREEN = colors.HexColor("#D9600C")       # brand amber (print-safe on white)
+GREEN_DARK = colors.HexColor("#8F3D05")  # deeper amber for section headings
+GREEN_PALE = colors.HexColor("#FFF4EA")  # tint for zebra rows and label cells
+GREEN_LIGHT = colors.HexColor("#FFE2C9")
 RED = colors.HexColor("#B9382D")
 RED_PALE = colors.HexColor("#FFF3F1")
 AMBER = colors.HexColor("#A66B00")
 AMBER_PALE = colors.HexColor("#FFF8E9")
 INK = colors.HexColor("#273142")
 MUTED = colors.HexColor("#667085")
-LINE = colors.HexColor("#DCE3E0")
+LINE = colors.HexColor("#E6E2DE")
 WHITE = colors.white
 
 
@@ -135,8 +135,10 @@ def _footer(canvas, doc):
     canvas.line(18 * mm, 13 * mm, PAGE_W - 18 * mm, 13 * mm)
     canvas.setFont("Helvetica", 7.2)
     canvas.setFillColor(MUTED)
-    canvas.drawString(18 * mm, 8 * mm, "NayaNisab - Bringing Pakistani curricula up to tomorrow's standards.")
-    canvas.drawRightString(PAGE_W - 18 * mm, 8 * mm, f"Page {doc.page} of 4")
+    canvas.drawString(18 * mm, 8 * mm, f"NayaNisab  |  Page {doc.page} of 4")
+    canvas.setFont("Helvetica-Bold", 7.2)
+    canvas.setFillColor(GREEN)
+    canvas.drawRightString(PAGE_W - 18 * mm, 8 * mm, "Created by Umar Shahzad")
     canvas.restoreState()
 
 

@@ -30,6 +30,8 @@ The generated PDF is designed for teacher review. It is not presented as formal 
 ## Project files
 
 - `app.py` - Streamlit interface
+- `nayanisab_theme.py` - dark / amber design system (CSS, animations, components)
+- `.streamlit/config.toml` - Streamlit theme so native widgets match the design system
 - `ai_workflow.py` - staged AI analysis workflow
 - `benchmarks.py` - subject-aware benchmark framework
 - `scoring.py` - transparent score logic
@@ -47,3 +49,22 @@ GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE"
 ```
 
 Do not commit the API key to GitHub.
+
+## Interface
+
+The interface uses a dark, amber-accented design system defined in `nayanisab_theme.py`:
+staged entrance animations, an animated score ring, animated benchmark meters, priority
+pills and a live "scanning" indicator while the workflow runs. All motion is pure CSS and
+respects `prefers-reduced-motion`, so nothing depends on JavaScript that Streamlit would strip.
+
+## Engine
+
+The analysis runs on the free, open-source `openai/gpt-oss-20b` model through the Groq API,
+in four schema-bound stages (structure, benchmark, plan, draft). Every stage is validated and
+repaired before rendering, so a malformed model response degrades one field instead of failing
+the whole analysis.
+
+## Credits
+
+Created by **Umar Shahzad**, built with my team during the PakAngels hackathon under the
+Generative & Agentic AI course.

@@ -146,6 +146,71 @@ def _coerce(value, schema: dict):
     return value
 
 
+_PUNCTUATION_ONLY = {":", ",", ".", "-", "--", ";", "|", "\u2013", "\u2014", '"', "'", "{", "}", "[", "]"}
+_JOINERS = (
+    "and ", "or ", "but ", "while ", "which ", "that ", "with ", "without ",
+    "so ", "then ", "although ", "though ", "because ", "including ",
+)
+
+
+def _looks_like_key(text: str, keys: set) -> Optional[str]:
+    """Return the schema key this list item actually is, if it is one."""
+    probe = text.strip().strip('"\'').rstrip(":").strip().lower().replace(" ", "_")
+    return probe if probe in keys else None
+
+
+def _repair_stray_keys(data: dict, schema: dict) -> dict:
+    """Rescue fields the model wrote *into* a list instead of alongside it.
+
+    When the model runs low on output room it can lose the JSON structure and
+    continue writing the remaining keys as elements of the list it was in, e.g.
+    proposed_course_updates = ["Real update.", "teacher_message", ":",
+    "This plan prioritises digital tools", "while mandating standards."].
+    Those stray elements are removed, the sentence fragments the model split at
+    a comma are re-joined, and the rescued text is handed back to the field it
+    belonged to whenever that field came back empty.
+    """
+    props = schema.get("properties", {})
+    keys = set(props)
+    for name, sub in props.items():
+        if sub.get("type") != "array" or sub.get("items", {}).get("type") != "string":
+            continue
+        items = data.get(name)
+        if not isinstance(items, list):
+            continue
+
+        kept: list[str] = []
+        rescued: dict[str, list[str]] = {}
+        target: Optional[str] = None
+        for raw in items:
+            text = str(raw).strip()
+            if not text or text in _PUNCTUATION_ONLY:
+                continue
+            found = _looks_like_key(text, keys)
+            if found and found != name:
+                target = found          # everything after this belongs to that key
+                rescued.setdefault(target, [])
+                continue
+            bucket = rescued[target] if target else kept
+            # A fragment that opens mid-sentence was split off at a comma.
+            if bucket and (text[:1].islower() or text.lower().startswith(_JOINERS)):
+                bucket[-1] = bucket[-1].rstrip(" ,") + ", " + text
+            else:
+                bucket.append(text)
+
+        data[name] = kept
+        for key, parts in rescued.items():
+            text = " ".join(part for part in parts if part).strip()
+            if not text:
+                continue
+            target_schema = props.get(key, {})
+            if target_schema.get("type") == "string" and not data.get(key):
+                data[key] = text
+            elif target_schema.get("type") == "array" and not data.get(key):
+                data[key] = [text]
+    return data
+
+
 def _failed_generation(exc: Exception) -> Optional[str]:
     """Recover the model text Groq rejected during schema validation."""
     body = getattr(exc, "body", None)
@@ -203,7 +268,7 @@ def _chat(client: Groq, messages: list[dict], *, max_tokens: int, schema: dict) 
                 },
             )
             content = response.choices[0].message.content
-            return _coerce(_clean_json(content), schema["schema"])
+            return _repair_stray_keys(_coerce(_clean_json(content), schema["schema"]), schema["schema"])
         except Exception as exc:
             last_err = exc
             text = str(exc)
@@ -214,7 +279,7 @@ def _chat(client: Groq, messages: list[dict], *, max_tokens: int, schema: dict) 
                 salvaged = _failed_generation(exc)
                 if salvaged:
                     try:
-                        return _coerce(_clean_json(salvaged), schema["schema"])
+                        return _repair_stray_keys(_coerce(_clean_json(salvaged), schema["schema"]), schema["schema"])
                     except Exception:
                         pass
                 required = ", ".join(schema["schema"].get("required", []))
@@ -440,7 +505,7 @@ STRUCTURE:\n{json.dumps(_compact(structure), ensure_ascii=False)}
     plan = _chat(
         client,
         [{"role": "system", "content": "Design practical curriculum improvements. Reply with one JSON object containing every required key."}, {"role": "user", "content": plan_prompt}],
-        max_tokens=750,
+        max_tokens=850,
         schema=SCHEMA_PLAN,
     )
 
@@ -455,7 +520,7 @@ BENCHMARK:\n{json.dumps(_compact(comparison), ensure_ascii=False)}
     draft = _chat(
         client,
         [{"role": "system", "content": "Draft a concise modern curriculum proposal. Reply with one JSON object containing every required key."}, {"role": "user", "content": draft_prompt}],
-        max_tokens=900,
+        max_tokens=950,
         schema=SCHEMA_DRAFT,
     )
     draft["disclaimer"] = DISCLAIMER
